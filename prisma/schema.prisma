@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id                  String   @id @default(uuid())
+  internal_id         String   @unique 
+  barcode             String?
+  name                String
+  description         String?
+  category            String?  
+  stock               Float    @default(0)
+  stockMin            Float    @default(0) 
+  salePrice           Float    
+  purchasePrice       Float    
+  currency            String   @default("PEN")
+  warehouse           String?  
+  originWarehouse     String?  // Almacén de extracción por defecto (ej: "2do Piso")
+  model               String?   // <--- ASEGÚRATE QUE ESTÉ ESTO
+  brand               String?   // <--- Y ESTO
+  
+  // Relación para el despiece (BOM)
+  components          BomStructure[] @relation("ParentProduct")
+  usedIn              BomStructure[] @relation("ComponentProduct")
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model BomStructure {
+  id              String  @id @default(uuid())
+  parentId        String  
+  componentId     String  
+  quantity        Float   
+  
+  parent          Product @relation("ParentProduct", fields: [parentId], references: [id])
+  component       Product @relation("ComponentProduct", fields: [componentId], references: [id])
+
+  @@unique([parentId, componentId])
+}
+
+model Quotation {
+  id            String          @id @default(uuid())
+  number        String          @unique // COT-1532
+  date          String          // 2026-04-30
+  time          String          // 17:34:32
+  customerName  String          // HYDRAULIC HOUSE JIREH E.I.R.L.
+  customerRuc   String?         // Documento del cliente (RUC o DNI)
+  address       String          // AV. LAS TORRES MZ. K LT. 1 OTR. LURIGANCHO
+  status        String          @default("PENDIENTE") // PENDIENTE, RESERVADO, FACTURADO
+  documentRef   String?         // Guarda factura o nota de venta (ej: NV01-27)
+  sellerName    String?         // Nombre del vendedor (ej: Joselin Ramirez Inga)
+  description   String?         // Observación de la cotización (ej: VD: Patricia Vargas)
+  items         QuotationItem[]
+  createdAt     DateTime        @default(now())
+}
+
+model QuotationItem {
+  id          String    @id @default(uuid())
+  quotationId String
+  productId   String    // ID interno o SKU
+  description String    // Nombre del producto
+  quantity    Float     // Cantidad requerida
+  stockSystem Float     // Stock físico actual en el almacén principal
+  quotation   Quotation @relation(fields: [quotationId], references: [id])
+}
+
+model Warehouse {
+  id          Int      @id
+  name        String
+  alias       String?
+  itemCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
