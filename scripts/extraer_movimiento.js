@@ -101,7 +101,14 @@ async function iniciarExtraccionMovimientos() {
         // 4. Guardar TODO el array masivo en movimiento.json
         const jsonPath = path.join(__dirname, '../data/movimiento.json');
         fs.writeFileSync(jsonPath, JSON.stringify(todosLosMovimientos, null, 2));
-        console.log("💾 Archivo 'movimiento.json' actualizado.");
+        console.log("💾 Archivo 'movimiento.json' actualizado con la base de datos completa.");
+
+        // Guardar metadata de extracción
+        const metaPath = path.join(__dirname, '../data/metadata.json');
+        let meta = {};
+        if (fs.existsSync(metaPath)) meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        meta.movimientos = new Date().toISOString();
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
     } catch (error) {
         console.error("❌ Fallo en la extracción de movimientos:", error.message);
         if (error.response) console.error("Respuesta del servidor:", error.response.status);

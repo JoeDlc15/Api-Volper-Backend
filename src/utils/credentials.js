@@ -1,9 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const credPath = path.join(__dirname, '../../data/credentials.json');
-
 function getSavedCredentials() {
+    const credPath = path.join(__dirname, '../../data', 'credentials.json');
     if (fs.existsSync(credPath)) {
         try {
             return JSON.parse(fs.readFileSync(credPath, 'utf8'));
@@ -20,16 +19,11 @@ function getSavedCredentials() {
 }
 
 function saveSavedCredentials(creds) {
+    const credPath = path.join(__dirname, '../../data', 'credentials.json');
     fs.writeFileSync(credPath, JSON.stringify(creds, null, 4));
-}
-
-// Bypasseamos el control de sesión ya que la app corre localmente sin login
-function getUser() {
-    return { email: "config@config.com" };
 }
 
 module.exports = {
     getSavedCredentials,
-    saveSavedCredentials,
-    getUser
+    saveSavedCredentials
 };

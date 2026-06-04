@@ -96,6 +96,13 @@ async function iniciarMision() {
         const jsonPath = path.join(__dirname, '../data/product.json');
         fs.writeFileSync(jsonPath, JSON.stringify(todosLosProductos, null, 2));
         console.log("💾 Archivo 'product.json' actualizado con la base de datos completa.");
+
+        // Guardar metadata de extracción
+        const metaPath = path.join(__dirname, '../data/metadata.json');
+        let meta = {};
+        if (fs.existsSync(metaPath)) meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        meta.catalog = new Date().toISOString();
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
     } catch (error) {
         console.error("❌ Fallo en la extracción automática:", error.message);
         if (error.response) console.error("Respuesta del servidor:", error.response.status);
