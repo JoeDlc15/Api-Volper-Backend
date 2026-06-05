@@ -6,3 +6,4 @@ creds.json
 Thumbs.db
 logs/
 *.log
+package-lock.json
