@@ -300,8 +300,9 @@ exports.getQuotations = async (req, res) => {
 
 // Ruta para eliminar una cotizaci├│n
 exports.deleteQuotation = async (req, res) => {
-    const { number } = req.params;
-    const fullNumber = number.includes('COT-') ? number : `COT-${number}`;
+    let { number } = req.params;
+    number = number.toUpperCase();
+    const fullNumber = (number.startsWith('COT-') || number.startsWith('EXT-')) ? number : `COT-${number}`;
 
     try {
         const quotation = await prisma.quotation.findUnique({ where: { number: fullNumber } });

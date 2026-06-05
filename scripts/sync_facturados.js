@@ -52,6 +52,9 @@ async function syncFacturados() {
             where: {
                 status: {
                     not: 'FACTURADO'
+                },
+                number: {
+                    startsWith: 'COT-'
                 }
             }
         });
