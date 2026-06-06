@@ -2,8 +2,16 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
+const fs = require('fs');
+
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Asegurar que el directorio de datos existe
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+}
 
 app.use(cors());
 app.use(express.json());
