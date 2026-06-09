@@ -283,8 +283,8 @@ exports.getCatalog = async (req, res) => {
 };
 
 exports.updateOrigin = async (req, res) => {
-    const user = getUser(req);
-    if (!user) return res.status(401).json({ success: false, error: "Sesión no válida" });
+    
+
 
     const { internal_id } = req.params;
     const { originWarehouse } = req.body;
@@ -342,8 +342,8 @@ exports.getWarehouses = async (req, res) => {
 };
 
 exports.updateWarehouse = async (req, res) => {
-    const user = getUser(req);
-    if (!user) return res.status(401).json({ success: false, message: "Sesión no válida" });
+    
+
 
     const { id } = req.params;
     const { alias } = req.body;
