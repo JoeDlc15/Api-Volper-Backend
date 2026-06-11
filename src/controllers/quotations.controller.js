@@ -332,7 +332,7 @@ exports.updateQuotationStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    if (!['PENDIENTE', 'RESERVADO', 'FACTURADO'].includes(status)) {
+    if (!['PENDIENTE', 'RESERVADO', 'TRASLADADO', 'TRASLADO PARCIAL', 'FACTURADO'].includes(status)) {
         return res.status(400).json({ success: false, error: "Estado no v├ílido" });
     }
 
@@ -347,11 +347,32 @@ exports.updateQuotationStatus = async (req, res) => {
     }
 };
 
+// Ruta para actualizar la fecha de importación
+exports.updateQuotationDate = async (req, res) => {
+    const { id } = req.params;
+    const { newDate } = req.body;
+
+    if (!newDate) return res.status(400).json({ error: "Falta la nueva fecha." });
+
+    try {
+        const parsedDate = new Date(newDate);
+        if (isNaN(parsedDate)) return res.status(400).json({ error: "Fecha inválida." });
+
+        const updated = await prisma.quotation.update({
+            where: { id },
+            data: { createdAt: parsedDate }
+        });
+        res.json({ success: true, quotation: updated });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 // Ruta para obtener almacenes
 
 exports.transferAll = async (req, res) => {
     const { id } = req.params;
-    const { target_warehouse_id } = req.body;
+    const { target_warehouse_id, selected_item_ids } = req.body;
 
     if (!target_warehouse_id) {
         return res.status(400).json({ success: false, error: "Debe seleccionar un almacén destino." });
@@ -364,7 +385,7 @@ exports.transferAll = async (req, res) => {
         });
 
         if (!quotation) return res.status(404).json({ success: false, error: "Cotización no encontrada" });
-        if (quotation.status === 'TRASLADADO') return res.status(400).json({ success: false, error: "Esta cotización ya fue trasladada." });
+        if (quotation.status === 'TRASLADADO') return res.status(400).json({ success: false, error: "Esta cotización ya fue trasladada en su totalidad." });
 
         const creds = getSavedCredentials();
         if (!creds.almacenEmail || !creds.almacenPassword) {
@@ -403,7 +424,29 @@ exports.transferAll = async (req, res) => {
         let kardexRecords = [];
         let successCount = 0;
 
-        for (const item of quotation.items) {
+        // Leer kardex para saber cuáles ya están trasladados
+        const kardexPath = path.join(__dirname, '../../data', 'kardex_ingresos.json');
+        let transferredItemCodes = new Set();
+        if (fs.existsSync(kardexPath)) {
+            try {
+                const kData = JSON.parse(fs.readFileSync(kardexPath, 'utf8'));
+                kData.forEach(k => {
+                    if (k.comments && k.comments.includes(`COT: ${quotation.number}`)) {
+                        transferredItemCodes.add(k.item_code);
+                    }
+                });
+            } catch(e){}
+        }
+
+        let itemsToTransfer = quotation.items;
+        if (selected_item_ids && Array.isArray(selected_item_ids) && selected_item_ids.length > 0) {
+            itemsToTransfer = quotation.items.filter(i => selected_item_ids.includes(i.id));
+        }
+
+        // Siempre excluir los ítems que ya fueron trasladados previamente
+        itemsToTransfer = itemsToTransfer.filter(i => !transferredItemCodes.has(i.productId));
+
+        for (const item of itemsToTransfer) {
             const product = await prisma.product.findUnique({ where: { internal_id: item.productId } });
             if (!product) continue;
 
@@ -487,18 +530,35 @@ exports.transferAll = async (req, res) => {
         }
 
         if (successCount > 0) {
-            await prisma.quotation.update({
-                where: { id },
-                data: { status: 'TRASLADADO' }
-            });
-
-            const kardexPath = path.join(__dirname, '../../data', 'kardex_ingresos.json');
             let kData = [];
             if (fs.existsSync(kardexPath)) {
                 try { kData = JSON.parse(fs.readFileSync(kardexPath, 'utf8')); } catch(e){}
             }
             kData.push(...kardexRecords);
             fs.writeFileSync(kardexPath, JSON.stringify(kData, null, 2));
+
+            let currentTransferredItemCodes = new Set();
+            kData.forEach(k => {
+                if (k.comments && k.comments.includes(`COT: ${quotation.number}`)) {
+                    currentTransferredItemCodes.add(k.item_code);
+                }
+            });
+
+            // Verificar si TODOS los ítems de la cotización ya fueron trasladados
+            let allTransferred = true;
+            for (let i of quotation.items) {
+                if (!currentTransferredItemCodes.has(i.productId)) {
+                    allTransferred = false;
+                    break;
+                }
+            }
+
+            const newStatus = allTransferred ? 'TRASLADADO' : 'TRASLADO PARCIAL';
+
+            await prisma.quotation.update({
+                where: { id },
+                data: { status: newStatus }
+            });
 
             for (const upd of cacheUpdates) {
                 // Verificar si existe el movData en el origen/destino, sino crearlo
@@ -662,19 +722,37 @@ exports.getQuotationByNumber = async (req, res) => {
             });
         }
 
+        // Check kardex for transferred items
+        const kardexPath = path.join(__dirname, '../../data', 'kardex_ingresos.json');
+        let transferredItemCodes = new Set();
+        if (fs.existsSync(kardexPath)) {
+            try {
+                const kData = JSON.parse(fs.readFileSync(kardexPath, 'utf8'));
+                // Comentarios como: "Traslado Masivo COT: COT-1670 hacia: ..."
+                kData.forEach(k => {
+                    if (k.comments && k.comments.includes(`COT: ${quotation.number}`)) {
+                        transferredItemCodes.add(k.item_code);
+                    }
+                });
+            } catch(e) {}
+        }
+
         // Mapeamos los items para calcular su estado real
         const itemsSincerados = quotation.items.map(item => {
             const stockTotal = stockMap[item.productId] || 0;
             const reservaGlobal = reservationMap[item.productId] || 0;
             const stockDispGlobal = stockTotal - reservaGlobal;
 
-            // Si esta cotizaci├│n YA EST├ü reservada, su cantidad es parte de "reservaGlobal",
-            // as├¡ que para evaluar si se puede cumplir, "le devolvemos" su propia cantidad al disponible
+            // Si esta cotización YA ESTÁ reservada, su cantidad es parte de "reservaGlobal",
+            // así que para evaluar si se puede cumplir, "le devolvemos" su propia cantidad al disponible
             const miReserva = (quotation.status === 'RESERVADO') ? item.quantity : 0;
             const stockDisponibleParaMi = stockDispGlobal + miReserva;
 
+            const isTransferred = transferredItemCodes.has(item.productId);
+
             return {
                 ...item,
+                isTransferred,
                 stockTotal,
                 reservaGlobal,
                 stockDispGlobal,
