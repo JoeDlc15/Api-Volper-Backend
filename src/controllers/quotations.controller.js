@@ -368,6 +368,25 @@ exports.updateQuotationDate = async (req, res) => {
     }
 };
 
+// Ruta para actualizar la observación manual
+exports.updateQuotationObservation = async (req, res) => {
+    const { id } = req.params;
+    const { isObserved, observationText } = req.body;
+
+    try {
+        const updated = await prisma.quotation.update({
+            where: { id },
+            data: { 
+                isObserved: isObserved,
+                observationText: observationText
+            }
+        });
+        res.json({ success: true, quotation: updated });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 // Ruta para obtener almacenes
 
 exports.transferAll = async (req, res) => {

@@ -56,6 +56,8 @@ model Quotation {
   documentRef   String?         // Guarda factura o nota de venta (ej: NV01-27)
   sellerName    String?         // Nombre del vendedor (ej: Joselin Ramirez Inga)
   description   String?         // Observación de la cotización (ej: VD: Patricia Vargas)
+  isObserved    Boolean         @default(false)
+  observationText String?
   items         QuotationItem[]
   createdAt     DateTime        @default(now())
 }

@@ -12,6 +12,7 @@ router.get('/quotations', quotationsController.getQuotations);
 router.delete('/quotations/:number', quotationsController.deleteQuotation);
 router.put('/quotations/:id/status', quotationsController.updateQuotationStatus);
 router.put('/quotations/:id/date', quotationsController.updateQuotationDate);
+router.put('/quotations/:id/observation', quotationsController.updateQuotationObservation);
 router.get('/quotations/:number', quotationsController.getQuotationByNumber);
 router.post('/quotations/:id/transfer-all', quotationsController.transferAll);
 router.post('/quotations/manual', quotationsController.createManualQuotation);
