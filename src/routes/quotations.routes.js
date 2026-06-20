@@ -10,6 +10,7 @@ router.delete('/customer-quotations', quotationsController.deleteCustomerQuotati
 router.get('/review-quotation/:number', quotationsController.reviewQuotation);
 router.get('/quotations', quotationsController.getQuotations);
 router.delete('/quotations/:number', quotationsController.deleteQuotation);
+router.get('/quotations-export-data', quotationsController.exportQuotationsData);
 router.put('/quotations/:id/status', quotationsController.updateQuotationStatus);
 router.put('/quotations/:id/date', quotationsController.updateQuotationDate);
 router.put('/quotations/:id/observation', quotationsController.updateQuotationObservation);

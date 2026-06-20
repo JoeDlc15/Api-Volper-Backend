@@ -286,13 +286,150 @@ exports.reviewQuotation = async (req, res) => {
     }
 };
 
-// Obtener todas las cotizaciones (sin los items, para que sea r├ípido)
+// Obtener todas las cotizaciones (sin los items, para que sea rápido)
 exports.getQuotations = async (req, res) => {
     try {
         const quotations = await prisma.quotation.findMany({
             orderBy: { createdAt: 'desc' }
         });
         res.json(quotations);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.exportQuotationsData = async (req, res) => {
+    try {
+        const quotations = await prisma.quotation.findMany({
+            include: { items: true },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        // Calcular reservas globales
+        const reservedItems = await prisma.quotationItem.findMany({
+            where: { quotation: { status: 'RESERVADO' } }
+        });
+        const reservationMap = {};
+        reservedItems.forEach(item => {
+            reservationMap[item.productId] = (reservationMap[item.productId] || 0) + item.quantity;
+        });
+
+        // Calcular stock desde product.json y movimiento.json (igual que en getQuotationByNumber)
+        const dbWarehouses = await prisma.warehouse.findMany();
+        const ventasNames = dbWarehouses
+            .filter(w => {
+                const aliasLower = (w.alias || '').toLowerCase();
+                const nameLower = (w.name || '').toLowerCase();
+                return aliasLower === 'ventas' || nameLower.includes('principal') || nameLower.includes('ventas');
+            })
+            .map(w => w.name);
+        if (ventasNames.length === 0) ventasNames.push("Almacén - Almacén principal");
+
+        const allDbProducts = await prisma.product.findMany({ select: { internal_id: true, originWarehouse: true, stock: true, warehouse: true } });
+        const originMap = {};
+        allDbProducts.forEach(p => { if (p.originWarehouse) originMap[p.internal_id] = p.originWarehouse; });
+
+        const aliasMap = {};
+        dbWarehouses.forEach(w => { aliasMap[w.name] = w.alias || (w.name.includes(' - ') ? w.name.split(' - ')[1].trim() : w.name); });
+
+        const jsonPath = path.join(__dirname, '../../data', 'product.json');
+        const movPath = path.join(__dirname, '../../data', 'movimiento.json');
+        const stockMap = {};
+        const seen = new Set();
+
+        const processItem = (internal_id, stock, whName) => {
+            const key = `${internal_id}-${whName.toLowerCase()}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+
+            const originAlias = originMap[internal_id];
+            if (originAlias) {
+                const alias = aliasMap[whName] || (whName.includes(' - ') ? whName.split(' - ')[1].trim() : whName);
+                if (alias.toLowerCase() === originAlias.toLowerCase()) {
+                    stockMap[internal_id] = (stockMap[internal_id] || 0) + stock;
+                }
+            } else {
+                const isVentas = ventasNames.some(vn => vn.toLowerCase() === whName.toLowerCase()) || whName.toLowerCase().includes('principal') || whName.toLowerCase().includes('ventas');
+                if (!isVentas) {
+                    stockMap[internal_id] = (stockMap[internal_id] || 0) + stock;
+                }
+            }
+        };
+
+        if (fs.existsSync(jsonPath)) {
+            try {
+                const dataArray = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+                dataArray.forEach(p => processItem(p.internal_id, p.stock || 0, p.warehouse_name || ''));
+                if (fs.existsSync(movPath)) {
+                    const movData = JSON.parse(fs.readFileSync(movPath, 'utf8'));
+                    const movArray = movData.data ? movData.data : movData;
+                    movArray.forEach(m => {
+                        if (m.item_internal_id) processItem(m.item_internal_id, m.stock || 0, m.warehouse_description || '');
+                    });
+                }
+            } catch(e) { console.error(e); }
+        } else {
+            allDbProducts.forEach(p => processItem(p.internal_id, p.stock || 0, p.warehouse || ''));
+        }
+
+        // Obtener historial del kardex
+        const kardexPath = path.join(__dirname, '../../data', 'kardex_ingresos.json');
+        let kData = [];
+        if (fs.existsSync(kardexPath)) {
+            try { kData = JSON.parse(fs.readFileSync(kardexPath, 'utf8')); } catch(e){}
+        }
+
+        const exportData = [];
+        quotations.forEach(q => {
+            // Optimizar la busqueda en kardex para la cotizacion actual
+            const qKardex = kData.filter(k => k.comments && k.comments.includes(`COT: ${q.number}`));
+            const transferredItemCodes = new Set(qKardex.map(k => k.item_code));
+
+            if (q.items && q.items.length > 0) {
+                q.items.forEach(item => {
+                    const isTransferred = transferredItemCodes.has(item.productId);
+                    const stockTotal = stockMap[item.productId] || 0;
+                    const reservaGlobal = reservationMap[item.productId] || 0;
+                    const stockDispGlobal = stockTotal - reservaGlobal;
+
+                    exportData.push({
+                        Cotizacion: q.number,
+                        Fecha: q.createdAt ? new Date(q.createdAt).toISOString().split('T')[0] : q.date,
+                        Cliente: q.customerName || "-",
+                        RUC: q.customerRuc || "-",
+                        Vendedor: q.sellerName || "-",
+                        Estado: q.status,
+                        Observacion: q.observationText || "-",
+                        Producto: item.description || item.productId,
+                        Codigo: item.productId,
+                        Requerido: item.quantity,
+                        Stock_Total: stockTotal,
+                        Reserva_Global: reservaGlobal,
+                        Stock_Disp: stockDispGlobal,
+                        Trasladado: isTransferred ? "SI" : "NO"
+                    });
+                });
+            } else {
+                exportData.push({
+                    Cotizacion: q.number,
+                    Fecha: q.createdAt ? new Date(q.createdAt).toISOString().split('T')[0] : q.date,
+                    Cliente: q.customerName || "-",
+                    RUC: q.customerRuc || "-",
+                    Vendedor: q.sellerName || "-",
+                    Estado: q.status,
+                    Observacion: q.observationText || "-",
+                    Producto: "SIN PRODUCTOS",
+                    Codigo: "-",
+                    Requerido: 0,
+                    Stock_Total: 0,
+                    Reserva_Global: 0,
+                    Stock_Disp: 0,
+                    Trasladado: "-"
+                });
+            }
+        });
+
+        res.json({ success: true, data: exportData });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
