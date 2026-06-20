@@ -8,6 +8,7 @@ router.get('/import-customer-progress', quotationsController.getImportCustomerPr
 router.post('/import-customer-quotations', quotationsController.importCustomerQuotations);
 router.delete('/customer-quotations', quotationsController.deleteCustomerQuotations);
 router.get('/review-quotation/:number', quotationsController.reviewQuotation);
+router.get('/review-temp-quotation/:number', quotationsController.reviewTempQuotation);
 router.get('/quotations', quotationsController.getQuotations);
 router.delete('/quotations/:number', quotationsController.deleteQuotation);
 router.get('/quotations-export-data', quotationsController.exportQuotationsData);

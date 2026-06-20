@@ -921,3 +921,141 @@ exports.getQuotationByNumber = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+exports.reviewTempQuotation = async (req, res) => {
+    let number = req.params.number.trim();
+    if (!number.startsWith('COT-')) {
+        number = 'COT-' + number;
+    }
+
+    try {
+        const creds = getSavedCredentials();
+        const email = creds.ventasEmail;
+        const password = creds.ventasPassword;
+
+        if (!email || !password) {
+            return res.status(400).json({ error: "Faltan configurar las credenciales de Ventas/Administrador." });
+        }
+
+        const { login, client } = require('../utils/auth');
+        await login(email, password);
+
+        const quotId = number.replace(/\D/g, '');
+        if (!quotId) {
+            return res.status(400).json({ error: "El formato de número de cotización no es válido." });
+        }
+
+        const detailResponse = await client.get(`/quotations/record/${quotId}`);
+        
+        if (typeof detailResponse.data === 'string' && detailResponse.data.includes('<html')) {
+            throw new Error("Sesión expirada o denegada en Volper Seal.");
+        }
+
+        const detail = detailResponse.data.data;
+        if (!detail || !detail.quotation) {
+            return res.status(404).json({ error: `No se encontró la cotización ${number} en el servidor.` });
+        }
+
+        // Simular formato de Prisma para el Frontend
+        const tempQuotation = {
+            number: detail.number_full,
+            date: detail.date_of_issue,
+            customerName: detail.quotation.customer.name || "Sin nombre",
+            customerRuc: detail.quotation.customer.number || "Sin RUC",
+            sellerName: "Revisión Temporal",
+            status: "REVISIÓN",
+            items: []
+        };
+
+        if (detail.quotation.items) {
+            detail.quotation.items.forEach(line => {
+                tempQuotation.items.push({
+                    productId: line.item.internal_id || "SIN-CODIGO",
+                    description: line.item.description || "Sin descripción",
+                    quantity: parseFloat(line.quantity) || 0
+                });
+            });
+        }
+
+        // Calcular stock (Mismo bloque de getQuotationByNumber)
+        const reservedItems = await prisma.quotationItem.findMany({
+            where: { quotation: { status: 'RESERVADO' } }
+        });
+        const reservationMap = {};
+        reservedItems.forEach(item => {
+            reservationMap[item.productId] = (reservationMap[item.productId] || 0) + item.quantity;
+        });
+
+        const dbWarehouses = await prisma.warehouse.findMany();
+        const ventasNames = dbWarehouses
+            .filter(w => {
+                const aliasLower = (w.alias || '').toLowerCase();
+                const nameLower = (w.name || '').toLowerCase();
+                return aliasLower === 'ventas' || nameLower.includes('principal') || nameLower.includes('ventas');
+            })
+            .map(w => w.name);
+
+        if (ventasNames.length === 0) ventasNames.push("Almacén - Almacén principal");
+
+        const allDbProducts = await prisma.product.findMany({ select: { internal_id: true, originWarehouse: true } });
+        const originMap = {};
+        allDbProducts.forEach(p => { if (p.originWarehouse) originMap[p.internal_id] = p.originWarehouse; });
+
+        const aliasMap = {};
+        dbWarehouses.forEach(w => { aliasMap[w.name] = w.alias || (w.name.includes(' - ') ? w.name.split(' - ')[1].trim() : w.name); });
+
+        const jsonPath = path.join(__dirname, '../../data', 'product.json');
+        const movPath = path.join(__dirname, '../../data', 'movimiento.json');
+        const stockMap = {};
+        const seen = new Set();
+
+        const processItem = (internal_id, stock, whName) => {
+            const key = `${internal_id}-${whName.toLowerCase()}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+
+            const originAlias = originMap[internal_id];
+            if (originAlias) {
+                const alias = aliasMap[whName] || (whName.includes(' - ') ? whName.split(' - ')[1].trim() : whName);
+                if (alias.toLowerCase() === originAlias.toLowerCase()) {
+                    stockMap[internal_id] = (stockMap[internal_id] || 0) + stock;
+                }
+            } else {
+                const isVentas = ventasNames.some(vn => vn.toLowerCase() === whName.toLowerCase()) ||
+                    whName.toLowerCase().includes('principal') || whName.toLowerCase().includes('ventas');
+                if (!isVentas) stockMap[internal_id] = (stockMap[internal_id] || 0) + stock;
+            }
+        };
+
+        if (fs.existsSync(jsonPath)) {
+            try {
+                const dataArray = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+                dataArray.forEach(p => processItem(p.internal_id, p.stock || 0, p.warehouse_name || ''));
+                if (fs.existsSync(movPath)) {
+                    const movData = JSON.parse(fs.readFileSync(movPath, 'utf8'));
+                    const movArray = movData.data ? movData.data : movData;
+                    movArray.forEach(m => { if (m.item_internal_id) processItem(m.item_internal_id, m.stock || 0, m.warehouse_description || ''); });
+                }
+            } catch(e) {}
+        }
+
+        const itemsSincerados = tempQuotation.items.map(item => {
+            const stockTotal = stockMap[item.productId] || 0;
+            const reservaGlobal = reservationMap[item.productId] || 0;
+            const stockDispGlobal = stockTotal - reservaGlobal;
+            return {
+                ...item,
+                isTransferred: false,
+                stockTotal,
+                reservaGlobal,
+                stockDispGlobal,
+                stockDisponibleParaMi: stockDispGlobal
+            };
+        });
+
+        res.json({ ...tempQuotation, items: itemsSincerados });
+    } catch (error) {
+        console.error("Error en reviewTempQuotation:", error.message);
+        res.status(500).json({ error: error.message });
+    }
+};
